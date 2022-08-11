@@ -1,0 +1,31 @@
+# <type>: <subject>
+##### Subject 50 characters ################# -> |
+#
+# Body Message
+######## Body 72 characters ##################################### -> |
+#
+# Issue Tracker Number or URL
+#
+# --- COMMIT END ---
+# Type can be
+#   feat    : new feature
+#   fix     : bug fix
+#   refactor: refactoring production code
+#   style   : formatting, missing semi colons, etc; no code change
+#   docs    : changes to documentation
+#   test    : adding or refactoring tests
+              no production code change
+#   chore   : updating grunt tasks etc
+              no production code change
+#   ci      : continuous integration
+#   perf    : performance
+#   data    : data
+# ------------------
+# Remember me ~
+#   모든 커밋 메시지는 한글로 작성합니다.
+#   커밋 메시지의 제목은 항상 주어진 타입에 대해서만 작성합니다.
+#   반드시 명령형으로 작성합니다.
+#   제목의 마지막 글자는 마침표로 끝내지 않습니다.
+#   커밋 내용은 제목 줄로부터 한 칸 띈 다음 작성합니다.
+#   커밋 내용은 반드시 -로 개조식으로 작성하며 72자 이내로 작성합니다.
+# ------------------
