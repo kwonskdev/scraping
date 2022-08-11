@@ -44,8 +44,26 @@ def get_month_calendar(year: int, month: int):
 
     return days
 
+def get_filename(stadium_code: str, month: int, day: int, ver: str):
+    today = datetime.date.today()
+    current_year = today.year
 
-def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=None):
+    if stadium_code is None:
+        filename = f'all_{current_year}_{month}'
+    else:
+        filename = f'{stadium_code}_{current_year}_{month}'
+
+    if day is None:
+        filename += f'_{today}'
+    else:
+        filename += f'_{day}_{today}'
+
+    filename += f'_{ver}ver.csv'
+
+    return filename
+
+def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=None, save: bool=True):
+    #TODO: 시작/끝 날짜 지정, stadium_code list로
     today = datetime.date.today()
     current_year, current_month = today.year, today.month
     if month > current_month + 1:
@@ -53,19 +71,14 @@ def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=N
 
     if stadium_code is None:
         stadium_codes = STADIUM.stadium_code
-        filename = f'all_{current_year}_{month}'
     else:
         stadium_codes = [stadium_code]
-        filename = f'{stadium_code}_{current_year}_{month}'
 
     if day is None:
         days = get_month_calendar(current_year, month)
-        filename += f'_{today}.csv'
 
     else:
         days = [datetime.date(current_year, month, day)]
-        filename += f'_{day}_{today}.csv'
-
 
     if month is None:
         month = current_month
@@ -76,17 +89,17 @@ def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=N
         #TODO: repeat 5로 제한, walrus로 가능한가?
         while True:
             _info = get_stadium_reservation_info(stadium_code, date)
-            time.sleep(1)
             if isinstance(_info, list):
                 _info = DataFrame(_info)
                 _info.loc[:, 'szStadium'] = stadium_code
+                time.sleep(1)
                 break
             else:
                 LOGGER.info(f'{_info} error : {ERROR[_info]}')
+                time.sleep(10)
 
         info = pd_concat([info, _info], axis=0)
 
-    #TODO: 예약가능일 경우 stadium이 None으로 나오는 데 채울 방안 마련
     info = DataFrame(info)
     info.loc[:, 'date'] = info['ssdate'].fillna('') + info['szDDate'].fillna('')
     info.loc[:, 'date'] = pd_to_datetime(info['date'])
@@ -98,9 +111,46 @@ def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=N
     info = info[['date', 'strtime', 'szStadium', 'reservation']]
     info.columns = ['date', 'time', 'stadium_code', 'reservation']
     info.loc[:, 'dow'] = info['date'].dt.day_name()
+    info.loc[:, 'time'] = info['time'].str.strip()
     info = info.merge(STADIUM, on=['stadium_code'], how='left')
 
-    info.to_csv(filename, index=False, encoding='utf-8-sig')
+    if save:
+        filename = get_filename(stadium_code, month, day, ver='all')
+        info.to_csv(filename, index=False, encoding='utf-8-sig')
+
+    return info
+
+def get_only_reservationable_stadium(stadium_code: str=None, month: int=None, day: int=None):
+    info = get_all_reservation_info(stadium_code, month, day)
+    #TODO: 공휴일 정보 추가
+    weekday = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    weekday_time = ['19:00 ~ 21:00', '20:00 ~ 22:00', '21:00 ~ 23:00', '22:00 ~ 24:00']
+    weekend = ['Saturday', 'Sunday']
+    weekend_not_time = ['23:00 ~ 01:00', '00:00 ~ 02:00', '01:00 ~ 03:00', '02:00 ~ 04:00',
+                        '03:00 ~ 05:00', '04:00 ~ 06:00', '05:00 ~ 07:00', '06:00 ~ 08:00',
+                        '07:00 ~ 09:00', '08:00 ~ 09:00']
+    today = datetime.date.today()
+    
+    query = '''
+    (
+        (
+            (dow.isin(@weekday)) and
+            (time.isin(@weekday_time)) and
+            (reservation=='예약가능')
+        ) or
+        (
+            (dow.isin(@weekend)) and
+            (not time.isin(@weekend_not_time)) and
+            (reservation=='예약가능')
+        )
+    ) and
+    (date > @today)
+    '''
+    query = query.replace('\n', '')
+    info = info.query(query).sort_values(['date', 'time', 'stadium_name'], ascending=True)
+
+    filename = get_filename(stadium_code, month, day, ver='only')
+    info.to_csv(filename, index=False)
 
     
 LOGGER = set_logger('log.log')
@@ -116,5 +166,8 @@ ERROR = {
 }
     
 if __name__ == '__main__':
-    fire.Fire(get_all_reservation_info)
+    fire.Fire({
+        'all': get_all_reservation_info,
+        'only': get_only_reservationable_stadium
+        })
 
