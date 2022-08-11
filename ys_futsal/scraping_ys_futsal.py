@@ -1,5 +1,7 @@
 #TODO: pyinstaller 만들기
 from pandas import DataFrame
+from pandas import to_datetime as pd_to_datetime
+from pandas import concat as pd_concat
 import numpy as np
 import requests
 import time
@@ -50,7 +52,7 @@ def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=N
         raise ValueError(f'{current_month+1}월 까지 정보만 얻을 수 있습니다.')
 
     if stadium_code is None:
-        stadium_codes = STADIUM.code
+        stadium_codes = STADIUM.stadium_code
         filename = f'all_{current_year}_{month}'
     else:
         stadium_codes = [stadium_code]
@@ -68,7 +70,7 @@ def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=N
     if month is None:
         month = current_month
 
-    info = []
+    info = DataFrame()
     for stadium_code, date in product(stadium_codes, days):
         LOGGER.info(f'{stadium_code=}, {date=}')
         #TODO: repeat 5로 제한, walrus로 가능한가?
@@ -76,14 +78,18 @@ def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=N
             _info = get_stadium_reservation_info(stadium_code, date)
             time.sleep(1)
             if isinstance(_info, list):
+                _info = DataFrame(_info)
+                _info.loc[:, 'szStadium'] = stadium_code
                 break
             else:
                 LOGGER.info(f'{_info} error : {ERROR[_info]}')
-        info.extend(_info)
+
+        info = pd_concat([info, _info], axis=0)
 
     #TODO: 예약가능일 경우 stadium이 None으로 나오는 데 채울 방안 마련
     info = DataFrame(info)
     info.loc[:, 'date'] = info['ssdate'].fillna('') + info['szDDate'].fillna('')
+    info.loc[:, 'date'] = pd_to_datetime(info['date'])
     info.loc[:, 'reservation'] = np.select(
         [info['szState']=='N',
          info['szState']=='Z',
@@ -91,6 +97,7 @@ def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=N
         ['예약완료', '입금대기', '예약가능'])
     info = info[['date', 'strtime', 'szStadium', 'reservation']]
     info.columns = ['date', 'time', 'stadium_code', 'reservation']
+    info.loc[:, 'dow'] = info['date'].dt.day_name()
     info = info.merge(STADIUM, on=['stadium_code'], how='left')
 
     info.to_csv(filename, index=False, encoding='utf-8-sig')
