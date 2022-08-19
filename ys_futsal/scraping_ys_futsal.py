@@ -2,11 +2,14 @@
 from pandas import DataFrame
 from pandas import to_datetime as pd_to_datetime
 from pandas import concat as pd_concat
+from pandas import date_range as pd_date_range
+from dateutil.relativedelta import relativedelta
+
+import warnings
 import numpy as np
 import requests
 import time
 import datetime
-import calendar
 from itertools import product
 import fire
 import logging
@@ -38,69 +41,54 @@ def get_stadium_reservation_info(stadium_code:str, date:datetime.date):
 
         return info
 
-def get_month_calendar(year: int, month: int):
-    num_days = calendar.monthrange(year, month)[1]
-    days = [datetime.date(year, month, day) for day in range(1, num_days+1)]
-
-    return days
-
-def get_filename(stadium_code: str, month: int, day: int, ver: str):
-    today = datetime.date.today()
-    current_year = today.year
-
-    if stadium_code is None:
-        filename = f'all_{current_year}_{month}'
+def get_filename(stadium_codes: str, start_date: str, end_date: str, ver: str):
+    if ((stadium_codes is None) or
+        (stadium_codes == STADIUM.stadium_code.values.tolist())):
+        filename = 'all_'
     else:
-        filename = f'{stadium_code}_{current_year}_{month}'
+        filename = f'{stadium_codes}_'
 
-    if day is None:
-        filename += f'_{today}'
-    else:
-        filename += f'_{day}_{today}'
-
-    filename += f'_{ver}ver.csv'
+    filename += f'{start_date}_{end_date}_{ver}ver.csv'
 
     return filename
 
-def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=None, save: bool=True):
-    #TODO: 시작/끝 날짜 지정, stadium_code list로
-    today = datetime.date.today()
-    current_year, current_month = today.year, today.month
-    if month > current_month + 1:
-        raise ValueError(f'{current_month+1}월 까지 정보만 얻을 수 있습니다.')
+def get_available_last_day(today):
+    result = today + relativedelta(months=2)
+    result = result.replace(day=1)
+    result = result - relativedelta(days=1)
+    return str(result)
 
-    if stadium_code is None:
-        stadium_codes = STADIUM.stadium_code
-    else:
-        stadium_codes = [stadium_code]
+def get_all_reservation_info(stadium_codes: str=None,start_date: str=None, end_date:str=None, save: bool=True):
+    #FIXME: n_request 제한 넘어가면 _info가 error code로 나와서 concat할 때 에러나는 거 처리\
+    start_date, end_date = set_date(start_date, end_date)
 
-    if day is None:
-        days = get_month_calendar(current_year, month)
-
-    else:
-        days = [datetime.date(current_year, month, day)]
-
-    if month is None:
-        month = current_month
+    dates = pd_date_range(start_date, end_date).date
+    if stadium_codes is None:
+        stadium_codes = STADIUM.stadium_code.values.tolist()
 
     info = DataFrame()
-    for stadium_code, date in product(stadium_codes, days):
+    for stadium_code, date in product(stadium_codes, dates):
         LOGGER.info(f'{stadium_code=}, {date=}')
-        #TODO: repeat 5로 제한, walrus로 가능한가?
-        while True:
+        n_repeat = 0
+        while (n_repeat := n_repeat + 1) <= 5:
             _info = get_stadium_reservation_info(stadium_code, date)
             if isinstance(_info, list):
                 _info = DataFrame(_info)
                 _info.loc[:, 'szStadium'] = stadium_code
-                time.sleep(1)
+                time.sleep(.5)
                 break
             else:
                 LOGGER.info(f'{_info} error : {ERROR[_info]}')
-                time.sleep(10)
+                time.sleep(15)
 
         info = pd_concat([info, _info], axis=0)
 
     info = DataFrame(info)
+    if 'ssdate' not in info.columns:
+        info.loc[:, 'ssdate'] = None
+    if 'szDDate' not in info.columns:
+        info.loc[:, 'szDDate'] = None
+
     info.loc[:, 'date'] = info['ssdate'].fillna('') + info['szDDate'].fillna('')
     info.loc[:, 'date'] = pd_to_datetime(info['date'])
     info.loc[:, 'reservation'] = np.select(
@@ -115,14 +103,34 @@ def get_all_reservation_info(stadium_code: str=None, month: int=None, day: int=N
     info = info.merge(STADIUM, on=['stadium_code'], how='left')
 
     if save:
-        filename = get_filename(stadium_code, month, day, ver='all')
+        filename = get_filename(stadium_codes, start_date, end_date, ver='all')
         info.to_csv(filename, index=False, encoding='utf-8-sig')
 
     return info
+def set_date(start_date, end_date):
+    today = datetime.date.today()
+    getable_last_day = get_available_last_day(today)
 
-def get_only_reservationable_stadium(stadium_code: str=None, month: int=None, day: int=None):
-    info = get_all_reservation_info(stadium_code, month, day)
+    if start_date is None:
+        start_date = str(today + relativedelta(days=1))
+
+    if start_date < str(today):
+        start_date = str(today + relativedelta(days=1))
+
+    if end_date is None:
+        end_date = getable_last_day
+
+    if end_date > getable_last_day:
+        end_date = getable_last_day
+
+    return start_date, end_date
+
+def get_only_reservationable_stadium(stadium_codes: str=None, start_date: str=None, end_date: str=None):
+    start_date, end_date = set_date(start_date, end_date)
+
+    info = get_all_reservation_info(stadium_codes, start_date, end_date)
     #TODO: 공휴일 정보 추가
+    #TODO: stadium_codes는 'ABC', 'ACD' 등의 형태로
     weekday = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     weekday_time = ['19:00 ~ 21:00', '20:00 ~ 22:00', '21:00 ~ 23:00', '22:00 ~ 24:00']
     weekend = ['Saturday', 'Sunday']
@@ -149,7 +157,7 @@ def get_only_reservationable_stadium(stadium_code: str=None, month: int=None, da
     query = query.replace('\n', '')
     info = info.query(query).sort_values(['date', 'time', 'stadium_name'], ascending=True)
 
-    filename = get_filename(stadium_code, month, day, ver='only')
+    filename = get_filename(stadium_codes, start_date, end_date, ver='only')
     info.to_csv(filename, index=False)
 
     
