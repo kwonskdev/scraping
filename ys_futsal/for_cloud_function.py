@@ -1,3 +1,33 @@
+import pandas as pd
+from flask import render_template_string
+
+TEMPLATE = """
+<!DOCTYPE html>
+<body>
+  <table>
+    <th>날짜</th>
+    <th>시간</th>
+    <th>구장</th>
+    <th>크기</th>
+    <th>요일</th>
+
+    {% for row in info %}
+    <tr>
+    {% for elem in row %}
+      <td>{{ elem }}</td>
+    {% endfor %}
+    </tr>
+    {% endfor %}
+
+  </table>
+</body>
+"""
+
+def hello_world(request):
+    info = get_only_reservationable_stadium(start_date="2022-10-20")
+    
+    return render_template_string(TEMPLATE, info=info.values)
+
 #TODO: pyinstaller 만들기
 from pandas import DataFrame
 from pandas import to_datetime as pd_to_datetime
@@ -11,23 +41,10 @@ import requests
 import time
 import datetime
 from itertools import product
-import fire
-import logging
-
-def set_logger(path: str):
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-
-    file_handler = logging.FileHandler(path)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    return logger
 
 def get_stadium_reservation_info(stadium_code:str, date:datetime.date):
     response = requests.get(URL.format(stadium_code=stadium_code, date=str(date)))
+    print(URL.format(stadium_code=stadium_code, date=str(date)))
     text = response.text
     
     #TODO: 모든 에러에 대해서 할 수 있게 코드 / regex로 가능한가?
@@ -41,24 +58,13 @@ def get_stadium_reservation_info(stadium_code:str, date:datetime.date):
 
         return info
 
-def get_filename(stadium_codes: str, start_date: str, end_date: str, ver: str):
-    if ((stadium_codes is None) or
-        (stadium_codes == STADIUM.stadium_code.values.tolist())):
-        filename = 'all_'
-    else:
-        filename = f'{stadium_codes}_'
-
-    filename += f'{start_date}_{end_date}_{ver}ver.csv'
-
-    return filename
-
 def get_available_last_day(today):
     result = today + relativedelta(months=2)
     result = result.replace(day=1)
     result = result - relativedelta(days=1)
     return str(result)
 
-def get_all_reservation_info(stadium_codes: str=None,start_date: str=None, end_date:str=None, save: bool=True):
+def get_all_reservation_info(stadium_codes: str=None,start_date: str=None, end_date:str=None):
     #FIXME: n_request 제한 넘어가면 _info가 error code로 나와서 concat할 때 에러나는 거 처리\
     start_date, end_date = set_date(start_date, end_date)
 
@@ -68,7 +74,6 @@ def get_all_reservation_info(stadium_codes: str=None,start_date: str=None, end_d
 
     info = DataFrame()
     for stadium_code, date in product(stadium_codes, dates):
-        LOGGER.info(f'{stadium_code=}, {date=}')
         n_repeat = 0
         while (n_repeat := n_repeat + 1) <= 5:
             _info = get_stadium_reservation_info(stadium_code, date)
@@ -78,7 +83,6 @@ def get_all_reservation_info(stadium_codes: str=None,start_date: str=None, end_d
                 time.sleep(.5)
                 break
             else:
-                LOGGER.info(f'{_info} error : {ERROR[_info]}')
                 time.sleep(15)
 
         info = pd_concat([info, _info], axis=0)
@@ -99,12 +103,9 @@ def get_all_reservation_info(stadium_codes: str=None,start_date: str=None, end_d
     info = info[['date', 'strtime', 'szStadium', 'reservation']]
     info.columns = ['date', 'time', 'stadium_code', 'reservation']
     info.loc[:, 'dow'] = info['date'].dt.day_name()
+    info.loc[:, 'date'] = info['date'].dt.date
     info.loc[:, 'time'] = info['time'].str.strip()
     info = info.merge(STADIUM, on=['stadium_code'], how='left')
-
-    if save:
-        filename = get_filename(stadium_codes, start_date, end_date, ver='all')
-        info.to_csv(filename, index=False, encoding='utf-8-sig')
 
     return info
 
@@ -159,11 +160,8 @@ def get_only_reservationable_stadium(stadium_codes: str=None, start_date: str=No
     query = query.replace('\n', '')
     info = info.query(query).sort_values(['date', 'time', 'stadium_name'], ascending=True)
 
-    filename = get_filename(stadium_codes, start_date, end_date, ver='only')
-    info.to_csv(filename, index=False)
-
+    return info[['date', 'time', 'stadium_name', 'size', 'dow']]
     
-LOGGER = set_logger('log.log')
 URL = 'http://www.futsalbase.com/api/reservation/allList?stadium={stadium_code}&date={date}'
 STADIUM = DataFrame({
     'stadium_code': ['A', 'B', 'C', 'H', 'I', 'E', 'D'],
@@ -173,10 +171,3 @@ STADIUM = DataFrame({
 ERROR = {
     429: 'Too Many Requests'
 }
-    
-if __name__ == '__main__':
-    fire.Fire({
-        'all': get_all_reservation_info,
-        'only': get_only_reservationable_stadium
-        })
-
