@@ -48,6 +48,6 @@ def show_info(request):
   end_date = end_date.replace(day=1)
   end_date = end_date - relativedelta(days=1)
 
-  info = pd.read_csv('gs://ys_futsal_info/ys_futsal_info.csv', storage_options={'token': 'credentials.json'})
+  info = pd.read_csv(f'gs://ys_futsal_info/{file_name}', storage_options={'token': 'credentials.json'})
   
   return render_template_string(TEMPLATE, info=info.values, date=str(date), start_date=str(start_date), end_date=str(end_date))
